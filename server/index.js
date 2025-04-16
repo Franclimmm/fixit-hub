@@ -8,6 +8,9 @@ const multer = require('multer');
 const twilio = require('twilio');
 
 const app = express();
+const PORT = 3000;
+
+// 🌐 Redirect www to non-www
 app.use((req, res, next) => {
   if (req.headers.host === 'www.fixithub.support') {
     return res.redirect(301, 'https://fixithub.support' + req.url);
@@ -15,32 +18,29 @@ app.use((req, res, next) => {
   next();
 });
 
-const PORT = 3000;
-
-// Twilio config
+// 📦 Twilio setup
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-const WHATSAPP_FROM = 'whatsapp:+14155238886'; // Twilio sandbox
-const WHATSAPP_TO = 'whatsapp:+447718614461';  // Your WhatsApp
+const WHATSAPP_FROM = 'whatsapp:+14155238886';
+const WHATSAPP_TO = 'whatsapp:+447718614461';
 
-// File upload config
+// 📂 Multer (file upload) config to Render-safe /tmp dir
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, 'uploads/'),
+  destination: (req, file, cb) => cb(null, '/tmp'),
   filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
 });
 const upload = multer({ storage });
 
-// Middleware
+// 🧱 Middleware
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(session({
   secret: 'fixit-secret-key',
   resave: false,
   saveUninitialized: false
 }));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Auth middleware
+// 🛡️ Auth middleware
 function requireLogin(req, res, next) {
   if (req.session.loggedIn) next();
   else res.redirect('/login');
@@ -48,76 +48,68 @@ function requireLogin(req, res, next) {
 
 const repairsFile = path.join(__dirname, 'repairs.json');
 
-// Routes
-
-// Home redirects to repair form
+// 🏠 Routes
 app.get('/', (req, res) => {
   res.redirect('/repair-form');
 });
 
-// Serve repair form
 app.get('/repair-form', (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'repair-form.html'));
 });
 
-// Handle repair request
-app.post('/repair-request', upload.single('photo'), (req, res) => {
-  const { name, contact, device, issue, method } = req.body;
+// 📨 Handle repair form submission
+app.post('/repair-request', upload.single('photo'), async (req, res) => {
+  try {
+    const { name, contact, device, issue, method } = req.body;
 
-  const newRequest = {
-    id: Date.now(),
-    name,
-    contact,
-    device,
-    issue,
-    method,
-    photo: req.file ? `/uploads/${req.file.filename}` : null,
-    quote: null,
-    submittedAt: new Date().toISOString()
-  };
+    const newRequest = {
+      id: Date.now(),
+      name,
+      contact,
+      device,
+      issue,
+      method,
+      photo: req.file ? req.file.path : null,
+      quote: null,
+      submittedAt: new Date().toISOString()
+    };
 
-  fs.readFile(repairsFile, 'utf8', (err, data) => {
     let repairs = [];
-
-    if (!err && data) {
-      try {
+    if (fs.existsSync(repairsFile)) {
+      const data = fs.readFileSync(repairsFile, 'utf8');
+      if (data) {
         repairs = JSON.parse(data);
-      } catch (e) {
-        console.error("Error parsing repairs.json:", e);
       }
     }
 
     repairs.push(newRequest);
+    fs.writeFileSync(repairsFile, JSON.stringify(repairs, null, 2));
 
-    fs.writeFile(repairsFile, JSON.stringify(repairs, null, 2), (err) => {
-      if (err) {
-        console.error("❌ Error writing to file:", err);
-        return res.status(500).send("Could not save your request.");
-      }
+    const message = `📬 New Repair Request\nName: ${name}\nDevice: ${device}\nIssue: ${issue}\nContact: ${contact}`;
+    try {
+      await twilioClient.messages.create({
+        from: WHATSAPP_FROM,
+        to: WHATSAPP_TO,
+        body: message
+      });
+      console.log("✅ WhatsApp alert sent");
+    } catch (twilioError) {
+      console.error("❌ WhatsApp alert failed:", twilioError.message);
+    }
 
-      // WhatsApp alert
-      const message = `📬 New Repair Request\nName: ${name}\nDevice: ${device}\nIssue: ${issue}\nContact: ${contact}`;
+    res.send(`<h2>Thanks ${name}! Your ${device} repair request has been sent to Franclim.</h2>`);
 
-      twilioClient.messages
-        .create({
-          from: WHATSAPP_FROM,
-          to: WHATSAPP_TO,
-          body: message
-        })
-        .then(() => console.log("✅ WhatsApp alert sent"))
-        .catch(err => console.error("❌ WhatsApp alert failed:", err.message));
-
-      res.send(`<h2>Thanks ${name}! Your ${device} repair request has been sent to Franclim.</h2>`);
-    });
-  });
+  } catch (err) {
+    console.error("❌ Upload failed:", err);
+    res.status(500).send("Something went wrong while uploading your request.");
+  }
 });
 
-// Dashboard
+// 🔐 Admin dashboard + API
 app.get('/dashboard', requireLogin, (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'dashboard.html'));
 });
 
-// JSON API for repairs
 app.get('/repairs', requireLogin, (req, res) => {
   fs.readFile(repairsFile, 'utf8', (err, data) => {
     if (err) return res.status(500).json({ error: "Failed to load repair requests." });
@@ -131,7 +123,6 @@ app.get('/repairs', requireLogin, (req, res) => {
   });
 });
 
-// Complete a repair
 app.post('/repair/:id/complete', requireLogin, (req, res) => {
   fs.readFile(repairsFile, 'utf8', (err, data) => {
     if (err) return res.sendStatus(500);
@@ -142,7 +133,6 @@ app.post('/repair/:id/complete', requireLogin, (req, res) => {
   });
 });
 
-// Delete a repair
 app.post('/repair/:id/delete', requireLogin, (req, res) => {
   fs.readFile(repairsFile, 'utf8', (err, data) => {
     if (err) return res.sendStatus(500);
@@ -153,7 +143,6 @@ app.post('/repair/:id/delete', requireLogin, (req, res) => {
   });
 });
 
-// Update a quote
 app.post('/repair/:id/quote', requireLogin, (req, res) => {
   const { quote } = req.body;
   const id = parseInt(req.params.id);
@@ -169,19 +158,18 @@ app.post('/repair/:id/quote', requireLogin, (req, res) => {
   });
 });
 
-// Show login page
+// 🔐 Login + Logout
 app.get('/login', (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'login.html'));
 });
 
-// Login
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
 
-  const adminUsername = process.env.ADMIN_USERNAME;
-  const adminPassword = process.env.ADMIN_PASSWORD;
-
-  if (username === adminUsername && password === adminPassword) {
+  if (
+    username === process.env.ADMIN_USERNAME &&
+    password === process.env.ADMIN_PASSWORD
+  ) {
     req.session.loggedIn = true;
     res.redirect('/dashboard');
   } else {
@@ -189,12 +177,11 @@ app.post('/login', (req, res) => {
   }
 });
 
-// Logout
 app.get('/logout', (req, res) => {
   req.session.destroy(() => res.redirect('/login'));
 });
 
-// Start server
+// 🚀 Start server
 app.listen(PORT, () => {
   console.log(`✅ Server running at http://localhost:${PORT}`);
 });
