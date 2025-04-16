@@ -8,6 +8,13 @@ const multer = require('multer');
 const twilio = require('twilio');
 
 const app = express();
+app.use((req, res, next) => {
+  if (req.headers.host === 'www.fixithub.support') {
+    return res.redirect(301, 'https://fixithub.support' + req.url);
+  }
+  next();
+});
+
 const PORT = 3000;
 
 // Twilio config
