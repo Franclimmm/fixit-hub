@@ -162,6 +162,11 @@ app.post('/repair/:id/quote', requireLogin, (req, res) => {
   });
 });
 
+// Show login page
+app.get('/login', (req, res) => {
+  res.sendFile(path.join(__dirname, 'views', 'login.html'));
+});
+
 // Login
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
