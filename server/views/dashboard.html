@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Repair Dashboard</title>
+  <style>
+    body {
+      font-family: Arial;
+      padding: 2rem;
+      background: #f5f5f5;
+    }
+
+    h1 {
+      margin-bottom: 1rem;
+    }
+
+    .stats {
+      background: #fff;
+      padding: 1rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      box-shadow: 0 0 4px rgba(0,0,0,0.1);
+    }
+
+    a[href="/logout"] {
+      float: right;
+      background: #444;
+      color: white;
+      padding: 6px 12px;
+      text-decoration: none;
+      border-radius: 4px;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      background: white;
+    }
+
+    th, td {
+      border: 1px solid #ddd;
+      padding: 8px;
+      text-align: left;
+    }
+
+    th {
+      background: #333;
+      color: white;
+    }
+
+    tr:nth-child(even) {
+      background: #f2f2f2;
+    }
+
+    input[type="number"] {
+      width: 80px;
+    }
+
+    .filter-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    @media (max-width: 768px) {
+      body {
+        padding: 1rem;
+      }
+
+      h1 {
+        font-size: 1.5rem;
+      }
+
+      .filter-group {
+        flex-direction: column;
+      }
+
+      table {
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+        font-size: 0.9rem;
+      }
+
+      label, input, select, button {
+        display: block;
+        width: 100%;
+        margin-bottom: 0.5rem;
+      }
+
+      button {
+        padding: 10px;
+      }
+
+      input[type="text"] {
+        width: 100% !important;
+      }
+
+      a[href="/logout"] {
+        float: none;
+        display: inline-block;
+        margin-top: 1rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>🛠️ Repair Job Dashboard</h1>
+  <a href="/logout">🚪 Logout</a>
+
+  <div class="stats">
+    <strong>Total Earnings (Completed Jobs): £<span id="totalEarnings">0.00</span></strong>
+  </div>
+
+  <div class="filter-group">
+    <label for="deviceFilter">Filter by Device:</label>
+    <select id="deviceFilter" onchange="loadRepairs()">
+      <option value="All">All</option>
+      <option value="PS4">PS4</option>
+      <option value="PC">PC</option>
+      <option value="Laptop">Laptop</option>
+      <option value="Other">Other</option>
+    </select>
+
+    <label for="statusFilter">Filter by Status:</label>
+    <select id="statusFilter" onchange="loadRepairs()">
+      <option value="All">All</option>
+      <option value="Pending">Pending</option>
+      <option value="Completed">Completed</option>
+    </select>
+
+    <input
+      type="text"
+      id="searchInput"
+      placeholder="Search by name or contact..."
+      oninput="loadRepairs()"
+    />
+
+    <button onclick="downloadCSV()">📁 Export CSV</button>
+  </div>
+
+  <table id="repairsTable">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Device</th>
+        <th>Issue</th>
+        <th>Method</th>
+        <th>Contact</th>
+        <th>Date</th>
+        <th>Status</th>
+        <th>Quote (£)</th>
+        <th>Actions</th>
+        <th>Image</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    function loadRepairs() {
+      const deviceFilter = document.getElementById('deviceFilter').value;
+      const statusFilter = document.getElementById('statusFilter').value;
+      const searchValue = document.getElementById('searchInput').value.toLowerCase();
+      let totalEarnings = 0;
+
+      fetch('/repairs')
+        .then(res => res.json())
+        .then(data => {
+          const tbody = document.querySelector('tbody');
+          tbody.innerHTML = '';
+
+          data
+            .filter(req => {
+              const deviceMatch = deviceFilter === 'All' || req.device === deviceFilter;
+              const statusMatch = statusFilter === 'All' || (req.status || 'Pending') === statusFilter;
+              const searchMatch =
+                req.name.toLowerCase().includes(searchValue) ||
+                req.contact.toLowerCase().includes(searchValue);
+              return deviceMatch && statusMatch && searchMatch;
+            })
+            .forEach(req => {
+              if (req.status === 'Completed' && !isNaN(req.quote)) {
+                totalEarnings += Number(req.quote);
+              }
+
+              const row = document.createElement('tr');
+              row.innerHTML = `
+                <td>${req.name}</td>
+                <td>${req.device}</td>
+                <td>${req.issue}</td>
+                <td>${req.method}</td>
+                <td>${req.contact}</td>
+                <td>${new Date(req.submittedAt).toLocaleString()}</td>
+                <td>${req.status || 'Pending'}</td>
+                <td>
+                  <input type="number" step="0.01" value="${req.quote ?? ''}" id="quote-${req.id}" />
+                  <button onclick="updateQuote(${req.id})">💾</button>
+                </td>
+                <td>
+                  <button onclick="markComplete(${req.id})">✅</button>
+                  <button onclick="deleteRepair(${req.id})">🗑️</button>
+                </td>
+                <td>${req.photo ? `<a href="${req.photo}" target="_blank">View</a>` : '—'}</td>
+              `;
+              tbody.appendChild(row);
+            });
+
+          document.getElementById('totalEarnings').innerText = totalEarnings.toFixed(2);
+        });
+    }
+
+    function updateQuote(id) {
+      const input = document.getElementById(`quote-${id}`);
+      const quote = parseFloat(input.value);
+      if (isNaN(quote)) return alert("Please enter a valid number");
+
+      fetch(`/repair/${id}/quote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `quote=${quote}`
+      }).then(() => loadRepairs());
+    }
+
+    function markComplete(id) {
+      fetch(`/repair/${id}/complete`, { method: 'POST' })
+        .then(() => loadRepairs());
+    }
+
+    function deleteRepair(id) {
+      fetch(`/repair/${id}/delete`, { method: 'POST' })
+        .then(() => loadRepairs());
+    }
+
+    function downloadCSV() {
+      fetch('/repairs')
+        .then(res => res.json())
+        .then(data => {
+          const headers = ['Name', 'Device', 'Issue', 'Method', 'Contact', 'Date', 'Status', 'Quote'];
+          const rows = data.map(r => [
+            r.name,
+            r.device,
+            r.issue,
+            r.method,
+            r.contact,
+            new Date(r.submittedAt).toLocaleString(),
+            r.status || 'Pending',
+            r.quote ?? ''
+          ]);
+
+          const csvContent = [headers, ...rows]
+            .map(row => row.map(cell => `"${cell}"`).join(','))
+            .join('\n');
+
+          const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+          const link = document.createElement('a');
+          link.href = URL.createObjectURL(blob);
+          link.setAttribute('download', 'repair_jobs.csv');
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        });
+    }
+
+    loadRepairs();
+  </script>
+</body>
+</html>

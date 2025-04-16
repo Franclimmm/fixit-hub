@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Repair Request</title>
+</head>
+<body>
+  <h1>Book a Repair</h1>
+  <form action="/repair-request" method="POST" enctype="multipart/form-data">
+    <label>Full Name: <input type="text" name="name" required></label><br><br>
+    <label>Contact (Email/Phone): <input type="text" name="contact" required></label><br><br>
+    <label>Device Type:
+      <select name="device">
+        <option>PS4</option>
+        <option>PC</option>
+        <option>Laptop</option>
+        <option>Other</option>
+      </select>
+    </label><br><br>
+    <label>Issue Description:<br>
+      <textarea name="issue" rows="5" cols="30" required></textarea>
+    </label><br><br>
+    <label>Upload a photo: <input type="file" name="photo"></label><br><br>
+    <label>Preferred Method:
+      <input type="radio" name="method" value="Drop-off" checked> Drop-off
+      <input type="radio" name="method" value="Pick-up"> Pick-up<br>
+
+    </label><br><br>
+    <button type="submit">Submit Repair Request</button>
+  </form>
+</body>
+</html>
