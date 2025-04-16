@@ -25,7 +25,7 @@ const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 const WHATSAPP_FROM = 'whatsapp:+14155238886';
 const WHATSAPP_TO = 'whatsapp:+447718614461';
 
-// 📂 Multer (file upload) config to Render-safe /tmp dir
+// 📂 Multer config for /tmp
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, '/tmp'),
   filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
@@ -39,6 +39,10 @@ app.use(session({
   resave: false,
   saveUninitialized: false
 }));
+
+// 🔓 Serve static assets
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/tmp', express.static('/tmp')); // ✅ Added to serve uploaded images
 
 // 🛡️ Auth middleware
 function requireLogin(req, res, next) {
@@ -98,7 +102,6 @@ app.post('/repair-request', upload.single('photo'), async (req, res) => {
     }
 
     res.send(`<h2>Thanks ${name}! Your ${device} repair request has been sent to Franclim.</h2>`);
-
   } catch (err) {
     console.error("❌ Upload failed:", err);
     res.status(500).send("Something went wrong while uploading your request.");
