@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="server/views/fixithub.png" alt="FixIt Hub Logo" width="200"/>
+  <img src="server/views/fixithub.png" alt="FixIt Hub Logo" width="350"/>
 </p>
 
-# fixit-hub
+# FixIt Hub
 
 A simple tool to track hardware repairs – built to log PS4 and other console fixes.
 
