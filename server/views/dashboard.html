@@ -10,11 +10,9 @@
       padding: 2rem;
       background: #f5f5f5;
     }
-
     h1 {
       margin-bottom: 1rem;
     }
-
     .stats {
       background: #fff;
       padding: 1rem;
@@ -22,7 +20,6 @@
       margin-bottom: 1rem;
       box-shadow: 0 0 4px rgba(0,0,0,0.1);
     }
-
     a[href="/logout"] {
       float: right;
       background: #444;
@@ -31,77 +28,46 @@
       text-decoration: none;
       border-radius: 4px;
     }
-
     table {
       border-collapse: collapse;
       width: 100%;
       background: white;
     }
-
     th, td {
       border: 1px solid #ddd;
       padding: 8px;
       text-align: left;
     }
-
     th {
       background: #333;
       color: white;
     }
-
     tr:nth-child(even) {
       background: #f2f2f2;
     }
-
     input[type="number"] {
       width: 80px;
     }
-
     .filter-group {
       display: flex;
       flex-wrap: wrap;
       gap: 1rem;
       margin-bottom: 1rem;
     }
-
     @media (max-width: 768px) {
-      body {
-        padding: 1rem;
-      }
-
-      h1 {
-        font-size: 1.5rem;
-      }
-
-      .filter-group {
-        flex-direction: column;
-      }
-
+      body { padding: 1rem; }
+      h1 { font-size: 1.5rem; }
+      .filter-group { flex-direction: column; }
       table {
         display: block;
         overflow-x: auto;
         white-space: nowrap;
         font-size: 0.9rem;
       }
-
       label, input, select, button {
         display: block;
         width: 100%;
         margin-bottom: 0.5rem;
-      }
-
-      button {
-        padding: 10px;
-      }
-
-      input[type="text"] {
-        width: 100% !important;
-      }
-
-      a[href="/logout"] {
-        float: none;
-        display: inline-block;
-        margin-top: 1rem;
       }
     }
   </style>
@@ -115,7 +81,7 @@
   </div>
 
   <div class="filter-group">
-    <label for="deviceFilter">Filter by Device:</label>
+    <label>Filter by Device:</label>
     <select id="deviceFilter" onchange="loadRepairs()">
       <option value="All">All</option>
       <option value="PS4">PS4</option>
@@ -124,20 +90,26 @@
       <option value="Other">Other</option>
     </select>
 
-    <label for="statusFilter">Filter by Status:</label>
+    <label>Filter by Status:</label>
     <select id="statusFilter" onchange="loadRepairs()">
       <option value="All">All</option>
       <option value="Pending">Pending</option>
       <option value="Completed">Completed</option>
     </select>
 
-    <input
-      type="text"
-      id="searchInput"
-      placeholder="Search by name or contact..."
-      oninput="loadRepairs()"
-    />
+    <label>From Date:</label>
+    <input type="date" id="fromDate" onchange="loadRepairs()" />
 
+    <label>To Date:</label>
+    <input type="date" id="toDate" onchange="loadRepairs()" />
+
+    <label>Sort:</label>
+    <select id="sortOrder" onchange="loadRepairs()">
+      <option value="newest">Newest First</option>
+      <option value="oldest">Oldest First</option>
+    </select>
+
+    <input type="text" id="searchInput" placeholder="Search by name/contact..." oninput="loadRepairs()" />
     <button onclick="downloadCSV()">📁 Export CSV</button>
   </div>
 
@@ -163,50 +135,65 @@
     function loadRepairs() {
       const deviceFilter = document.getElementById('deviceFilter').value;
       const statusFilter = document.getElementById('statusFilter').value;
+      const fromDate = document.getElementById('fromDate').value;
+      const toDate = document.getElementById('toDate').value;
+      const sortOrder = document.getElementById('sortOrder').value;
       const searchValue = document.getElementById('searchInput').value.toLowerCase();
       let totalEarnings = 0;
 
       fetch('/repairs')
         .then(res => res.json())
         .then(data => {
+          let filtered = data.filter(req => {
+            const deviceMatch = deviceFilter === 'All' || req.device === deviceFilter;
+            const statusMatch = statusFilter === 'All' || (req.status || 'Pending') === statusFilter;
+            const searchMatch =
+              req.name.toLowerCase().includes(searchValue) ||
+              req.contact.toLowerCase().includes(searchValue);
+
+            const date = new Date(req.submittedAt);
+            const from = fromDate ? new Date(fromDate) : null;
+            const to = toDate ? new Date(toDate) : null;
+            const dateMatch = (!from || date >= from) && (!to || date <= to);
+
+            return deviceMatch && statusMatch && searchMatch && dateMatch;
+          });
+
+          if (sortOrder === 'newest') {
+            filtered.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+          } else {
+            filtered.sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt));
+          }
+
           const tbody = document.querySelector('tbody');
           tbody.innerHTML = '';
 
-          data
-            .filter(req => {
-              const deviceMatch = deviceFilter === 'All' || req.device === deviceFilter;
-              const statusMatch = statusFilter === 'All' || (req.status || 'Pending') === statusFilter;
-              const searchMatch =
-                req.name.toLowerCase().includes(searchValue) ||
-                req.contact.toLowerCase().includes(searchValue);
-              return deviceMatch && statusMatch && searchMatch;
-            })
-            .forEach(req => {
-              if (req.status === 'Completed' && !isNaN(req.quote)) {
-                totalEarnings += Number(req.quote);
-              }
+          filtered.forEach(req => {
+            if (req.status === 'Completed' && !isNaN(req.quote)) {
+              totalEarnings += Number(req.quote);
+            }
 
-              const row = document.createElement('tr');
-              row.innerHTML = `
-                <td>${req.name}</td>
-                <td>${req.device}</td>
-                <td>${req.issue}</td>
-                <td>${req.method}</td>
-                <td>${req.contact}</td>
-                <td>${new Date(req.submittedAt).toLocaleString()}</td>
-                <td>${req.status || 'Pending'}</td>
-                <td>
-                  <input type="number" step="0.01" value="${req.quote ?? ''}" id="quote-${req.id}" />
-                  <button onclick="updateQuote(${req.id})">💾</button>
-                </td>
-                <td>
-                  <button onclick="markComplete(${req.id})">✅</button>
-                  <button onclick="deleteRepair(${req.id})">🗑️</button>
-                </td>
-                <td>${req.photo ? `<a href="${req.photo}" target="_blank">View</a>` : '—'}</td>
-              `;
-              tbody.appendChild(row);
-            });
+            const row = document.createElement('tr');
+            row.innerHTML = `
+              <td>${req.name}</td>
+              <td>${req.device}</td>
+              <td>${req.issue}</td>
+              <td>${req.method}</td>
+              <td>${req.contact}</td>
+              <td>${new Date(req.submittedAt).toLocaleString()}</td>
+              <td>${req.status || 'Pending'}</td>
+              <td>
+                <input type="number" step="0.01" value="${req.quote ?? ''}" id="quote-${req.id}" />
+                <button onclick="updateQuote(${req.id})">💾</button>
+              </td>
+              <td>
+                <button onclick="markComplete(${req.id})">✅</button>
+                <button onclick="deleteRepair(${req.id})">🗑️</button>
+              </td>
+              <td>${req.photo ? `<a href="${req.photo}" target="_blank">View</a>` : '—'}</td>
+            `;
+            tbody.appendChild(row);
+          });
 
           document.getElementById('totalEarnings').innerText = totalEarnings.toFixed(2);
         });
