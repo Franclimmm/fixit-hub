@@ -6,3 +6,4 @@ server/node_modules/
 server/uploads/
 uploads/
 !server/uploads/_keep
+.idea/
