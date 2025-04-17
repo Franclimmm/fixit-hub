@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="server/views/fixithub.png" alt="FixIt Hub Logo" width="200"/>
+</p>
+
 # fixit-hub
 
 A simple tool to track hardware repairs – built to log PS4 and other console fixes.
@@ -61,3 +65,7 @@ https://myaccount.google.com/apppasswords
 
 - `/client` – frontend files (HTML, CSS, JS)
 - `/server` – backend server (Express, file uploads, SMS)
+
+## 🔐 Admin Access
+Visit /login to access the dashboard.
+Login credentials are defined in .env.
