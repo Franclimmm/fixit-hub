@@ -19,26 +19,27 @@ app.use((req, res, next) => {
   next();
 });
 
-// 📦 Twilio setup
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
-const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
-const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+// 🛠 Twilio setup
+const twilioClient = twilio(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
 const WHATSAPP_FROM = 'whatsapp:+14155238886';
 const WHATSAPP_TO = 'whatsapp:+447718614461';
 
-// 📧 Nodemailer setup (Gmail)
+// 📧 Gmail SMTP (Nodemailer)
 const mailer = nodemailer.createTransport({
   service: 'gmail',
   auth: {
     user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_PASS
-  }
+    pass: process.env.GMAIL_PASS,
+  },
 });
 
-// 📂 Multer config for /tmp
+// 📂 Multer config
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, '/tmp'),
-  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
+  destination: (req, file, cb) => cb(null, 'uploads/'),
+  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname),
 });
 const upload = multer({ storage });
 
@@ -50,15 +51,15 @@ app.use(session({
   saveUninitialized: false
 }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use('/tmp', express.static('/tmp')); // Serve uploaded images
+app.use('/tmp', express.static('/tmp'));
 
-// 🛡️ Auth middleware
+const repairsFile = path.join(__dirname, 'repairs.json');
+
+// 🔐 Auth middleware
 function requireLogin(req, res, next) {
   if (req.session.loggedIn) next();
   else res.redirect('/login');
 }
-
-const repairsFile = path.join(__dirname, 'repairs.json');
 
 // 🏠 Routes
 app.get('/', (req, res) => {
@@ -69,11 +70,9 @@ app.get('/repair-form', (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'repair-form.html'));
 });
 
-// 📨 Handle repair form submission
 app.post('/repair-request', upload.single('photo'), async (req, res) => {
   try {
     const { name, contact, device, issue, method } = req.body;
-
     const newRequest = {
       id: Date.now(),
       name,
@@ -81,17 +80,15 @@ app.post('/repair-request', upload.single('photo'), async (req, res) => {
       device,
       issue,
       method,
-      photo: req.file ? req.file.path : null,
+      photo: req.file ? `/uploads/${req.file.filename}` : null,
       quote: null,
-      submittedAt: new Date().toISOString()
+      submittedAt: new Date().toISOString(),
     };
 
     let repairs = [];
     if (fs.existsSync(repairsFile)) {
       const data = fs.readFileSync(repairsFile, 'utf8');
-      if (data) {
-        repairs = JSON.parse(data);
-      }
+      repairs = data ? JSON.parse(data) : [];
     }
 
     repairs.push(newRequest);
@@ -99,7 +96,6 @@ app.post('/repair-request', upload.single('photo'), async (req, res) => {
 
     const message = `📬 New Repair Request\nName: ${name}\nDevice: ${device}\nIssue: ${issue}\nContact: ${contact}`;
 
-    // 🔔 WhatsApp Alert
     try {
       await twilioClient.messages.create({
         from: WHATSAPP_FROM,
@@ -107,11 +103,10 @@ app.post('/repair-request', upload.single('photo'), async (req, res) => {
         body: message
       });
       console.log("✅ WhatsApp alert sent");
-    } catch (twilioError) {
-      console.error("❌ WhatsApp alert failed:", twilioError.message);
+    } catch (e) {
+      console.error("❌ WhatsApp failed:", e.message);
     }
 
-    // 📧 Email Alert
     try {
       await mailer.sendMail({
         from: `"FixItHub" <${process.env.GMAIL_USER}>`,
@@ -120,78 +115,80 @@ app.post('/repair-request', upload.single('photo'), async (req, res) => {
         text: `Name: ${name}\nDevice: ${device}\nIssue: ${issue}\nContact: ${contact}\nMethod: ${method}\nPhoto: ${newRequest.photo || 'N/A'}`
       });
       console.log("✅ Email alert sent");
-    } catch (emailErr) {
-      console.error("❌ Email alert failed:", emailErr.message);
+    } catch (e) {
+      console.error("❌ Email failed:", e.message);
     }
 
-    res.send(`<h2>Thanks ${name}! Your ${device} repair request has been sent to Franclim.</h2>`);
+    res.send(`<h2>Thanks ${name}! Your ${device} repair request has been sent.</h2>`);
   } catch (err) {
-    console.error("❌ Upload failed:", err);
-    res.status(500).send("Something went wrong while uploading your request.");
+    console.error("❌ Submission failed:", err);
+    res.status(500).send("Something went wrong.");
   }
 });
 
-// 🔐 Admin dashboard + API
+// 🧰 Dashboard
 app.get('/dashboard', requireLogin, (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'dashboard.html'));
 });
 
 app.get('/repairs', requireLogin, (req, res) => {
   fs.readFile(repairsFile, 'utf8', (err, data) => {
-    if (err) return res.status(500).json({ error: "Failed to load repair requests." });
-
+    if (err) return res.status(500).json({ error: 'Failed to load repairs' });
     try {
-      const repairs = JSON.parse(data);
-      res.json(repairs);
+      res.json(JSON.parse(data));
     } catch (e) {
-      res.status(500).json({ error: "Error parsing repair data." });
+      res.status(500).json({ error: 'Corrupted data' });
     }
-  });
-});
-
-app.post('/repair/:id/complete', requireLogin, (req, res) => {
-  fs.readFile(repairsFile, 'utf8', (err, data) => {
-    if (err) return res.sendStatus(500);
-    let repairs = JSON.parse(data);
-    const id = parseInt(req.params.id);
-    repairs = repairs.map(r => r.id === id ? { ...r, status: 'Completed' } : r);
-    fs.writeFile(repairsFile, JSON.stringify(repairs, null, 2), () => res.sendStatus(200));
-  });
-});
-
-app.post('/repair/:id/delete', requireLogin, (req, res) => {
-  fs.readFile(repairsFile, 'utf8', (err, data) => {
-    if (err) return res.sendStatus(500);
-    let repairs = JSON.parse(data);
-    const id = parseInt(req.params.id);
-    repairs = repairs.filter(r => r.id !== id);
-    fs.writeFile(repairsFile, JSON.stringify(repairs, null, 2), () => res.sendStatus(200));
   });
 });
 
 app.post('/repair/:id/quote', requireLogin, (req, res) => {
   const { quote } = req.body;
   const id = parseInt(req.params.id);
-
   fs.readFile(repairsFile, 'utf8', (err, data) => {
     if (err) return res.sendStatus(500);
     let repairs = JSON.parse(data);
     repairs = repairs.map(r => r.id === id ? { ...r, quote: parseFloat(quote) } : r);
-    fs.writeFile(repairsFile, JSON.stringify(repairs, null, 2), err => {
-      if (err) return res.sendStatus(500);
-      res.sendStatus(200);
-    });
+    fs.writeFile(repairsFile, JSON.stringify(repairs, null, 2), () => res.sendStatus(200));
   });
 });
 
-// 🔐 Login + Logout
+app.post('/repair/:id/complete', requireLogin, (req, res) => {
+  const id = parseInt(req.params.id);
+  fs.readFile(repairsFile, 'utf8', (err, data) => {
+    if (err) return res.sendStatus(500);
+    let repairs = JSON.parse(data);
+    repairs = repairs.map(r => r.id === id ? { ...r, status: 'Completed' } : r);
+    fs.writeFile(repairsFile, JSON.stringify(repairs, null, 2), () => res.sendStatus(200));
+  });
+});
+
+app.post('/repair/:id/delete', requireLogin, (req, res) => {
+  const id = parseInt(req.params.id);
+  fs.readFile(repairsFile, 'utf8', (err, data) => {
+    if (err) return res.sendStatus(500);
+    let repairs = JSON.parse(data);
+    const target = repairs.find(r => r.id === id);
+
+    if (target?.photo && target.photo.startsWith('/uploads/')) {
+      const photoPath = path.join(__dirname, target.photo);
+      fs.unlink(photoPath, err => {
+        if (err) console.warn("⚠️ Image delete failed:", err.message);
+      });
+    }
+
+    repairs = repairs.filter(r => r.id !== id);
+    fs.writeFile(repairsFile, JSON.stringify(repairs, null, 2), () => res.sendStatus(200));
+  });
+});
+
+// 🔐 Login / Logout
 app.get('/login', (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'login.html'));
 });
 
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
-
   if (
     username === process.env.ADMIN_USERNAME &&
     password === process.env.ADMIN_PASSWORD
@@ -207,7 +204,7 @@ app.get('/logout', (req, res) => {
   req.session.destroy(() => res.redirect('/login'));
 });
 
-// 🚀 Start server
+// 🚀 Start
 app.listen(PORT, () => {
   console.log(`✅ Server running at http://localhost:${PORT}`);
 });
