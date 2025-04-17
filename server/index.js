@@ -6,6 +6,7 @@ const bodyParser = require('body-parser');
 const session = require('express-session');
 const multer = require('multer');
 const twilio = require('twilio');
+const nodemailer = require('nodemailer');
 
 const app = express();
 const PORT = 3000;
@@ -25,6 +26,15 @@ const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 const WHATSAPP_FROM = 'whatsapp:+14155238886';
 const WHATSAPP_TO = 'whatsapp:+447718614461';
 
+// 📧 Nodemailer setup (Gmail)
+const mailer = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_PASS
+  }
+});
+
 // 📂 Multer config for /tmp
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, '/tmp'),
@@ -39,10 +49,8 @@ app.use(session({
   resave: false,
   saveUninitialized: false
 }));
-
-// 🔓 Serve static assets
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use('/tmp', express.static('/tmp')); // ✅ Added to serve uploaded images
+app.use('/tmp', express.static('/tmp')); // Serve uploaded images
 
 // 🛡️ Auth middleware
 function requireLogin(req, res, next) {
@@ -90,6 +98,8 @@ app.post('/repair-request', upload.single('photo'), async (req, res) => {
     fs.writeFileSync(repairsFile, JSON.stringify(repairs, null, 2));
 
     const message = `📬 New Repair Request\nName: ${name}\nDevice: ${device}\nIssue: ${issue}\nContact: ${contact}`;
+
+    // 🔔 WhatsApp Alert
     try {
       await twilioClient.messages.create({
         from: WHATSAPP_FROM,
@@ -99,6 +109,19 @@ app.post('/repair-request', upload.single('photo'), async (req, res) => {
       console.log("✅ WhatsApp alert sent");
     } catch (twilioError) {
       console.error("❌ WhatsApp alert failed:", twilioError.message);
+    }
+
+    // 📧 Email Alert
+    try {
+      await mailer.sendMail({
+        from: `"FixItHub" <${process.env.GMAIL_USER}>`,
+        to: process.env.ALERT_EMAIL,
+        subject: `New Repair Request from ${name}`,
+        text: `Name: ${name}\nDevice: ${device}\nIssue: ${issue}\nContact: ${contact}\nMethod: ${method}\nPhoto: ${newRequest.photo || 'N/A'}`
+      });
+      console.log("✅ Email alert sent");
+    } catch (emailErr) {
+      console.error("❌ Email alert failed:", emailErr.message);
     }
 
     res.send(`<h2>Thanks ${name}! Your ${device} repair request has been sent to Franclim.</h2>`);
