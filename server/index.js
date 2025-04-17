@@ -11,7 +11,6 @@ const nodemailer = require('nodemailer');
 const app = express();
 const PORT = 3000;
 
-// 🌐 Redirect www to non-www
 app.use((req, res, next) => {
   if (req.headers.host === 'www.fixithub.support') {
     return res.redirect(301, 'https://fixithub.support' + req.url);
@@ -19,31 +18,24 @@ app.use((req, res, next) => {
   next();
 });
 
-// 🛠 Twilio setup
-const twilioClient = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
+const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 const WHATSAPP_FROM = 'whatsapp:+14155238886';
 const WHATSAPP_TO = 'whatsapp:+447718614461';
 
-// 📧 Gmail SMTP (Nodemailer)
 const mailer = nodemailer.createTransport({
   service: 'gmail',
   auth: {
     user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_PASS,
-  },
+    pass: process.env.GMAIL_PASS
+  }
 });
 
-// 📂 Multer config
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, 'uploads/'),
-  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname),
+  destination: (req, file, cb) => cb(null, path.join(__dirname, 'uploads')),
+  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
 });
 const upload = multer({ storage });
 
-// 🧱 Middleware
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(session({
   secret: 'fixit-secret-key',
@@ -51,17 +43,14 @@ app.use(session({
   saveUninitialized: false
 }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use('/tmp', express.static('/tmp'));
 
-const repairsFile = path.join(__dirname, 'repairs.json');
-
-// 🔐 Auth middleware
 function requireLogin(req, res, next) {
   if (req.session.loggedIn) next();
   else res.redirect('/login');
 }
 
-// 🏠 Routes
+const repairsFile = path.join(__dirname, 'repairs.json');
+
 app.get('/', (req, res) => {
   res.redirect('/repair-form');
 });
@@ -73,6 +62,7 @@ app.get('/repair-form', (req, res) => {
 app.post('/repair-request', upload.single('photo'), async (req, res) => {
   try {
     const { name, contact, device, issue, method } = req.body;
+
     const newRequest = {
       id: Date.now(),
       name,
@@ -80,22 +70,21 @@ app.post('/repair-request', upload.single('photo'), async (req, res) => {
       device,
       issue,
       method,
-      photo: req.file ? `/uploads/${req.file.filename}` : null,
+      photo: req.file ? '/uploads/' + req.file.filename : null,
       quote: null,
-      submittedAt: new Date().toISOString(),
+      submittedAt: new Date().toISOString()
     };
 
     let repairs = [];
     if (fs.existsSync(repairsFile)) {
       const data = fs.readFileSync(repairsFile, 'utf8');
-      repairs = data ? JSON.parse(data) : [];
+      if (data) repairs = JSON.parse(data);
     }
 
     repairs.push(newRequest);
     fs.writeFileSync(repairsFile, JSON.stringify(repairs, null, 2));
 
     const message = `📬 New Repair Request\nName: ${name}\nDevice: ${device}\nIssue: ${issue}\nContact: ${contact}`;
-
     try {
       await twilioClient.messages.create({
         from: WHATSAPP_FROM,
@@ -103,8 +92,8 @@ app.post('/repair-request', upload.single('photo'), async (req, res) => {
         body: message
       });
       console.log("✅ WhatsApp alert sent");
-    } catch (e) {
-      console.error("❌ WhatsApp failed:", e.message);
+    } catch (err) {
+      console.error("❌ WhatsApp failed:", err.message);
     }
 
     try {
@@ -115,30 +104,50 @@ app.post('/repair-request', upload.single('photo'), async (req, res) => {
         text: `Name: ${name}\nDevice: ${device}\nIssue: ${issue}\nContact: ${contact}\nMethod: ${method}\nPhoto: ${newRequest.photo || 'N/A'}`
       });
       console.log("✅ Email alert sent");
-    } catch (e) {
-      console.error("❌ Email failed:", e.message);
+    } catch (err) {
+      console.error("❌ Email failed:", err.message);
     }
 
-    res.send(`<h2>Thanks ${name}! Your ${device} repair request has been sent.</h2>`);
+    res.send(`<h2>Thanks ${name}! Your ${device} repair request has been sent to Franclim.</h2>`);
   } catch (err) {
-    console.error("❌ Submission failed:", err);
-    res.status(500).send("Something went wrong.");
+    console.error("❌ Upload error:", err);
+    res.status(500).send("Internal error processing request.");
   }
 });
 
-// 🧰 Dashboard
 app.get('/dashboard', requireLogin, (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'dashboard.html'));
 });
 
 app.get('/repairs', requireLogin, (req, res) => {
   fs.readFile(repairsFile, 'utf8', (err, data) => {
-    if (err) return res.status(500).json({ error: 'Failed to load repairs' });
+    if (err) return res.status(500).json({ error: "Could not read repairs file." });
     try {
-      res.json(JSON.parse(data));
-    } catch (e) {
-      res.status(500).json({ error: 'Corrupted data' });
+      const repairs = JSON.parse(data);
+      res.json(repairs);
+    } catch {
+      res.status(500).json({ error: "Failed to parse data." });
     }
+  });
+});
+
+app.post('/repair/:id/complete', requireLogin, (req, res) => {
+  fs.readFile(repairsFile, 'utf8', (err, data) => {
+    if (err) return res.sendStatus(500);
+    let repairs = JSON.parse(data);
+    const id = parseInt(req.params.id);
+    repairs = repairs.map(r => r.id === id ? { ...r, status: 'Completed' } : r);
+    fs.writeFile(repairsFile, JSON.stringify(repairs, null, 2), () => res.sendStatus(200));
+  });
+});
+
+app.post('/repair/:id/delete', requireLogin, (req, res) => {
+  fs.readFile(repairsFile, 'utf8', (err, data) => {
+    if (err) return res.sendStatus(500);
+    let repairs = JSON.parse(data);
+    const id = parseInt(req.params.id);
+    repairs = repairs.filter(r => r.id !== id);
+    fs.writeFile(repairsFile, JSON.stringify(repairs, null, 2), () => res.sendStatus(200));
   });
 });
 
@@ -153,46 +162,13 @@ app.post('/repair/:id/quote', requireLogin, (req, res) => {
   });
 });
 
-app.post('/repair/:id/complete', requireLogin, (req, res) => {
-  const id = parseInt(req.params.id);
-  fs.readFile(repairsFile, 'utf8', (err, data) => {
-    if (err) return res.sendStatus(500);
-    let repairs = JSON.parse(data);
-    repairs = repairs.map(r => r.id === id ? { ...r, status: 'Completed' } : r);
-    fs.writeFile(repairsFile, JSON.stringify(repairs, null, 2), () => res.sendStatus(200));
-  });
-});
-
-app.post('/repair/:id/delete', requireLogin, (req, res) => {
-  const id = parseInt(req.params.id);
-  fs.readFile(repairsFile, 'utf8', (err, data) => {
-    if (err) return res.sendStatus(500);
-    let repairs = JSON.parse(data);
-    const target = repairs.find(r => r.id === id);
-
-    if (target?.photo && target.photo.startsWith('/uploads/')) {
-      const photoPath = path.join(__dirname, target.photo);
-      fs.unlink(photoPath, err => {
-        if (err) console.warn("⚠️ Image delete failed:", err.message);
-      });
-    }
-
-    repairs = repairs.filter(r => r.id !== id);
-    fs.writeFile(repairsFile, JSON.stringify(repairs, null, 2), () => res.sendStatus(200));
-  });
-});
-
-// 🔐 Login / Logout
 app.get('/login', (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'login.html'));
 });
 
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
-  if (
-    username === process.env.ADMIN_USERNAME &&
-    password === process.env.ADMIN_PASSWORD
-  ) {
+  if (username === process.env.ADMIN_USERNAME && password === process.env.ADMIN_PASSWORD) {
     req.session.loggedIn = true;
     res.redirect('/dashboard');
   } else {
@@ -204,7 +180,6 @@ app.get('/logout', (req, res) => {
   req.session.destroy(() => res.redirect('/login'));
 });
 
-// 🚀 Start
 app.listen(PORT, () => {
   console.log(`✅ Server running at http://localhost:${PORT}`);
 });
